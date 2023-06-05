@@ -1,36 +1,251 @@
+import boto3
+import smart_open
 import pandas as pd
-import json
 import openpyxl
 from openpyxl.styles import PatternFill
 import openpyxl.styles as styles
 
 
+class AWSHandler:
+    def __init__(self) -> None:
+        self.athena = boto3.client("athena", region_name="us-west-2")
+
+    def run_query(self, query: str) -> pd.DataFrame:
+        response = self.athena.start_query_execution(
+            QueryString=query,
+            QueryExecutionContext={"Database": "prodcoach"},
+            ResultConfiguration={
+                "OutputLocation": "s3://z-ally-proc-oregon-greenzone/query_results_new/athena/output/"
+            },
+        )
+
+        execution_id = response["QueryExecutionId"]
+
+        while True:
+            query_execution = self.athena.get_query_execution(
+                QueryExecutionId=execution_id
+            )
+            state = query_execution["QueryExecution"]["Status"]["State"]
+
+            if state == "SUCCEEDED":
+                break
+            elif state == "FAILED" or state == "CANCELLED":
+                raise Exception(f"Athena query {state.lower()}.")
+
+        result_location = query_execution["QueryExecution"]["ResultConfiguration"][
+            "OutputLocation"
+        ]
+
+        file_content = pd.read_csv(smart_open.open(result_location))
+
+        if len(file_content) > 0:
+            return file_content
+        else:
+            raise Exception(
+                "No Calls Are Present For The Agent Id's In This Date Range!"
+            )
+
+
+class TrendsReport(object):
+    def __init__(self, start_date: str, end_date: str, agent_id: str) -> None:
+        handler = AWSHandler()
+        where_clause = f"a.timestamp >= '{start_date}T00:00:00' AND a.timestamp <= '{end_date}T23:59:59' and zid1.internal_id in ( {agent_id} )"
+        query = f'SELECT zid1.internal_id as agent_id, zid1.agent_name as agent_name, zid2.id as supervisor_id, zid2.agent_name as supervisor_name, cti.callid._id AS call_id, a.scores."rules.open.confirm_customer_id".AI_Scores.score AS "rules.open.confirm_customer_id.score", a.scores."rules.open.confirm_agent_id".AI_Scores.score AS "rules.open.confirm_agent_id.score", a.scores."rules.open.develop_rpc".AI_Scores.score AS "rules.open.develop_rpc.score", a.scores."rules.open.state_mini_miranda".AI_Scores.score AS "rules.open.state_mini_miranda.score", a.scores."rules.open.state_call_monitor".AI_Scores.score AS "rules.open.outbound.state_call_monitor.score", a.scores."rules.open.outbound.call_purpose".AI_Scores.score AS "rules.open.outbound.call_purpose.score", a.scores."rule.open.pause_listen".AI_Scores.score AS "rules.open.pause_listen.score", a.scores."rules.open.inbound.account_id".AI_Scores.score AS "rules.open.inbound.account_id.score", a.scores."rules.open.inbound.verify_identity".AI_Scores.score AS "rules.open.inbound.verify_identity.score", a.scores."rules.facts_on_the_table.pay_total_amount_due_today".AI_Scores.score AS "rules.facts_on_the_table.pay_total_amount_due_today.score", a.scores."rules.dqs.how_much_pay_today".AI_Scores.score AS "rules.dqs.how_much_pay_today.score", a.scores."rules.dqs.when_pay_remaining".AI_Scores.score AS "rules.dqs.when_pay_remaining.score", a.scores."rules.negotiation_flow.paying.gain_tad".AI_Scores.score AS "rules.negotiation_flow.paying.gain_tad.score", a.scores."rules.negotiation_flow.rapid_payment".AI_Scores.score AS "rules.negotiation_flow.rapid_payment.score", a.scores."rules.negotiation_flow.paying.straight_to_close".AI_Scores.score AS "rules.negotiation_flow.paying.straight_to_close.score", a.scores."rules.negotiation_flow.willing.two.payments".AI_Scores.score AS "rules.negotiation_flow.willing.two.payments.score", a.scores."rules.negotiation_flow.willing.raise_offer".AI_Scores.score AS "rules.negotiation_flow.willing.raise_offer.score", a.scores."rules.negotiation_flow.vague.partial_vague".AI_Scores.score AS "rules.negotiation_flow.vague.partial_vague.score", a.scores."rules.negotiation_flow.probing_questions".AI_Scores.score AS "rules.negotiation_flow.probing_questions.score", a.scores."rules.negotiation_flow.vague.3questions".AI_Scores.score AS "rules.negotiation_flow.vague.3questions.score", a.scores."rules.negotiation_flow.vague.repeat_until_full".AI_Scores.score AS "rules.negotiation_flow.vague.repeat_until_full.score", a.scores."rules.negotiation_flow.other_income".AI_Scores.score AS "rules.negotiation_flow.other_income.score", a.scores."rules.negotiation_flow.unwilling.rfd".AI_Scores.score AS "rules.negotiation_flow.unwilling.rfd.score", a.scores."rules.negotiation_flow.unwilling.sources_income".AI_Scores.score AS "rules.negotiation_flow.unwilling.sources_income.score", a.scores."rules.negotiation_flow.unwilling.create_solution".AI_Scores.score AS "rules.negotiation_flow.unwilling.create_solution.score", a.scores."rules.negotiation_flow.unwilling.modification".AI_Scores.score AS "rules.negotiation_flow.unwilling.modification.score", a.scores."rules.negotiation_flow.unwilling.intent".AI_Scores.score AS "rules.negotiation_flow.unwilling.intent.score", a.scores."rules.close.demographics".AI_Scores.score AS "rules.close.demographics.score", a.scores."rules.close.urgency".AI_Scores.score AS "rules.close.urgency.score", a.scores."rules.close.partial.remainder".AI_Scores.score AS "rules.close.partial.remainder.score", a.scores."rules.close.recap".AI_Scores.score AS "rules.close.recap.score", a.scores."rules.close.thank".AI_Scores.score AS "rules.close.thank.score", a.scores."rules.close.none.mission".AI_Scores.score AS "rules.close.none.mission.score", a.scores."rules.emotional_outburst.aet.acknowledge".AI_Scores.score AS "rules.emotional_outburst.aet.acknowledge.score", a.scores."rules.emotional_outburst.aet.wiifm".AI_Scores.score AS "rules.emotional_outburst.aet.wiifm.score", a.scores."rules.emotional_outburst.bridge.active_listening".AI_Scores.score AS "rules.emotional_outburst.bridge.active_listening.score", a.scores."rules.emotional_outburst.bridge.acknowledge_emotion".AI_Scores.score AS "rules.emotional_outburst.bridge.acknowledge_emotion.score", a.scores."rules.emotional_outburst.bridge.remove_isolation".AI_Scores.score AS "rules.emotional_outburst.bridge.remove_isolation.score", a.scores."rules.emotional_outburst.bridge.assure_customer".AI_Scores.score AS "rules.emotional_outburst.bridge.assure_customer.score" FROM metadata_datastore_new mnew JOIN coach_scorecards_ai_scores_luis a ON cast(cti.callid._id AS varchar) = a.call_id JOIN zid_new_hudi zid1 on cti.contact._core_agentpk = zid1.internal_id JOIN zid_new_hudi zid2 on zid1.supervisor_id = zid2.id where {where_clause}'
+        print(f"Query ----->\n{query}")
+        self.data = handler.run_query(query)
+        print(f"\nAthena Result ----->\n{self.data}")
+        self.start_date = start_date
+        self.end_date = end_date
+        self.load_file = self.data
+        self.agent_data = self.load_file.iloc[:, [0, 1, 2, 3, 4]].copy()
+        self.scores_data = self.load_file.iloc[
+            :, [0, *[i for i in range(4, 44)]]
+        ].copy()
+
+    def get_call_id_per_agent_id(self, df: pd.DataFrame) -> dict:
+        data = {}
+
+        for row in df.iterrows():
+            try:
+                data[row[1]["agent_id"]].append(row[1]["call_id"])
+            except KeyError:
+                data[row[1]["agent_id"]] = [row[1]["call_id"]]
+
+        return data
+
+    def get_agent_name_per_agent_id(self, df: pd.DataFrame) -> dict:
+        return dict(zip(df["agent_id"], df["agent_name"]))
+
+    def get_supervisor_name_per_agent_id(self, df: pd.DataFrame) -> dict:
+        return dict(zip(df["agent_id"], df["supervisor_name"]))
+
+    def get_supervisor_id_per_agent_id(self, df: pd.DataFrame) -> dict:
+        return dict(zip(df["agent_id"], df["supervisor_id"]))
+
+    def get_skill_name_and_score_per_agent_id(self) -> dict:
+        data = self.get_call_id_per_agent_id(self.agent_data)
+        return {
+            agent: self.select_skills(
+                [(val, agent) for val in data[agent]], self.scores_data
+            )
+            for agent in data
+        }
+
+    def get_skill_list_by_agent(self) -> pd.DataFrame:
+        skill_list_by_agent = self.get_skill_name_and_score_per_agent_id()
+        agent_name = self.get_agent_name_per_agent_id(self.agent_data)
+        supervisor_name = self.get_supervisor_name_per_agent_id(self.agent_data)
+        supervisor_id = self.get_supervisor_id_per_agent_id(self.agent_data)
+        return pd.DataFrame(
+            [
+                {
+                    **skill,
+                    "agent_id": agent,
+                    "agent_name": agent_name[agent],
+                    "supervisor_id": supervisor_id[agent],
+                    "supervisor_name": supervisor_name[agent],
+                }
+                for agent in skill_list_by_agent
+                for skill in skill_list_by_agent[agent]
+            ]
+        )
+
+    def get_all_agents_per_skill(self, df: pd.DataFrame) -> dict:
+        skill_list_by_agent = self.get_skill_list_by_agent()
+        agent_by_skill = {
+            skill: sorted(
+                [
+                    {
+                        "agent_pk": row["agent_id"],
+                        "agent_name": row["agent_name"],
+                        "supervisor_id": row["supervisor_id"],
+                        "supervisor_name": row["supervisor_name"],
+                        "skill_score": row["skill_score"],
+                        "call_count": row["call_count"],
+                    }
+                    for _, row in skill_list_by_agent[
+                        skill_list_by_agent["skill_name"] == skill
+                    ].iterrows()
+                ],
+                key=lambda d: d["skill_score"],
+            )
+            for skill in set(df.columns)
+            & set(skill_list_by_agent["skill_name"].unique())
+        }
+        return agent_by_skill
+
+    #! Change the val == 1 to val == "1" if query is from athena
+    def get_yes(self, val: int) -> int:
+        return 1 if val == 1 else 0
+
+    def get_total_call(self, val: int):
+        return 1 if val in [1, 2, 3] else 0
+
+    def select_skills(self, call_list, df: pd.DataFrame):
+        per_skill_calls = []
+        selected_skills = []
+
+        agent_df = df[df["agent_id"] == call_list[0][1]].drop_duplicates()
+        per_skill_calls += [dict(row[1]) for row in agent_df.iterrows()]
+
+        new_df = pd.DataFrame(per_skill_calls)
+
+        for col in df.columns:
+            if col not in ["call_id", "agent_id"]:
+                temp_val = (
+                    sum(new_df[col].apply(self.get_yes))
+                    / sum(new_df[col].apply(self.get_total_call))
+                    if sum(new_df[col].apply(self.get_total_call)) > 0
+                    else 0
+                )
+                temp_val = round(temp_val * 2, 1)
+
+                try:
+                    selected_skills.append(
+                        {
+                            "skill_name": col,
+                            "skill_score": temp_val,
+                            "call_count": sum(new_df[col].apply(self.get_total_call)),
+                        }
+                    )
+                except KeyError:
+                    selected_skills = [
+                        {
+                            "skill_name": col,
+                            "skill_score": temp_val,
+                            "call_count": sum(new_df[col].apply(self.get_total_call)),
+                        }
+                    ]
+
+        return sorted(selected_skills, key=lambda d: d["skill_score"])
+
+    def get_dataFrame(self) -> pd.DataFrame:
+        """
+        /*
+         * Returns a pandas dataframe in a new format
+         * obtained from loaded json file.
+         */
+        """
+        json_data = self.get_all_agents_per_skill(self.scores_data)
+        return pd.DataFrame.from_dict(
+            [
+                {
+                    "agent_pk": item["agent_pk"],
+                    "agent_name": item["agent_name"],
+                    "supervisor_id": item["supervisor_id"],
+                    "supervisor_name": item["supervisor_name"],
+                    "skill_details": {
+                        "skill_name": skill_name,
+                        "skill_score": item["skill_score"],
+                        "call_count": item["call_count"],
+                    },
+                }
+                for skill_name, value in json_data.items()
+                for item in value
+            ]
+        )
+
+    def get_agent_report(self) -> list:
+        df = self.get_dataFrame()
+        return [
+            {
+                "agent_pk": int(id),
+                "agent_name": df.loc[df["agent_pk"] == id, "agent_name"].iloc[0],
+                "supervisor_id": df.loc[df["agent_pk"] == id, "supervisor_id"].iloc[0],
+                "supervisor_name": df.loc[df["agent_pk"] == id, "supervisor_name"].iloc[
+                    0
+                ],
+                "skill_details": sorted(
+                    df.loc[df["agent_pk"] == id, "skill_details"].tolist(),
+                    key=lambda d: d["skill_score"],
+                ),
+            }
+            for id in df["agent_pk"].unique()
+        ]
+
+    def run(self) -> list:
+        return self.get_agent_report()
+
+
 class ConverResultToExcel(object):
     def __init__(self) -> None:
-        self.first_file_start_date = input("First JSON File Start Date : ")
-        self.first_file_end_date = input("First JSON File End Date : ")
+        self.first_file_start_date = input("Start Date : ")
+        self.first_file_end_date = input("End Date : ")
+        get_agent_id = input("Enter Agent Id's Separated With Comma : ")
+        self.agent_id = get_agent_id
 
-        self.df1 = self.load_json(self.first_file_start_date, self.first_file_end_date)
+        trends = TrendsReport(
+            self.first_file_start_date, self.first_file_end_date, self.agent_id
+        )
+        get_json = trends.run()
+        print(f"\nProcessed Data ----->\n{get_json}")
+        self.df1 = get_json
 
         self.yellow_fill = self.get_Fill("FFF6BD")
         self.red_fill = self.get_Fill("FF9F9F")
         self.green_fill = self.get_Fill("CEEDC7")
 
         self.rule_desc = self.load_rules()
-
-    def load_json(self, date_start: str, date_end: str) -> dict:
-        while True:
-            try:
-                return json.load(
-                    open(
-                        input(
-                            f"Enter The Path For {date_start} to {date_end} Result : "
-                        ),
-                        "r",
-                    )
-                )
-            except FileNotFoundError:
-                print("\nNot A Valid Path!\n")
 
     def load_rules(self) -> list:
         return [
@@ -379,13 +594,13 @@ class ConverResultToExcel(object):
         new_df = pd.DataFrame(result)
 
         new_df.to_excel(
-            f"NoColorFinalResult/excel_weekly_call_analyzer_result_form_({self.first_file_start_date})-({self.first_file_end_date}).xlsx",
+            f"Junk/excel_weekly_call_analyzer_result_form_({self.first_file_start_date})-({self.first_file_end_date}).xlsx",
             index=False,
             header=False,
         )
 
         read_saved_df = pd.read_excel(
-            f"NoColorFinalResult/excel_weekly_call_analyzer_result_form_({self.first_file_start_date})-({self.first_file_end_date}).xlsx",
+            f"Junk/excel_weekly_call_analyzer_result_form_({self.first_file_start_date})-({self.first_file_end_date}).xlsx",
         )
 
         required = [
@@ -415,12 +630,12 @@ class ConverResultToExcel(object):
         )
         result_df = result_df.reset_index(drop=True)
         result_df.to_excel(
-            f"NoColorFinalResult/elem_excel_weekly_call_analyzer_result_form_({self.first_file_start_date})-({self.first_file_end_date}).xlsx",
+            f"Junk/elem_excel_weekly_call_analyzer_result_form_({self.first_file_start_date})-({self.first_file_end_date}).xlsx",
             index=False,
         )
 
         wb = openpyxl.load_workbook(
-            f"NoColorFinalResult/elem_excel_weekly_call_analyzer_result_form_({self.first_file_start_date})-({self.first_file_end_date}).xlsx"
+            f"Junk/elem_excel_weekly_call_analyzer_result_form_({self.first_file_start_date})-({self.first_file_end_date}).xlsx"
         )
 
         # Select the worksheet to work with
@@ -476,8 +691,9 @@ class ConverResultToExcel(object):
 
         # Save the modified file
         wb.save(
-            f"Result/excel_weekly_call_analyzer_result_form_({self.first_file_start_date})-({self.first_file_end_date}).xlsx"
+            f"weekly_trends_report/excel_weekly_call_analyzer_result_from_({self.first_file_start_date})-({self.first_file_end_date}).xlsx"
         )
+        print("\nTrends Generated!\nCheck ```weekly_trends_report``` Folder.\n")
 
 
 ConverResultToExcel().run()
